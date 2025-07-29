@@ -43,10 +43,12 @@ classdef Switch < handle
                 self.python.exec('state = switch.state()');  
                 curState =  self.python.get('state');
                 if ~nargout
-                    if curState 
+                    if curState == self.ON
                         fprintf('HDD Power Supply turned ON. \n');
+                    elseif curState == self.OFF
+                        fprintf('HDD Power Supply turned OFF. \n');
                     else
-                        fprintf('HDD Power Supply turned OFF. \n');                        
+                        fprintf('HDD Power Supply state is unknown\n');
                     end
                 end
 
@@ -64,28 +66,6 @@ classdef Switch < handle
             catch ME
                 warning(ME.identifier, 'Failed to close Python connection: %s', ME.message);
             end
-        end
-    end
-
-
-    methods (Static)
-        function state = toggle(state)
-            % Toggle the switch state
-            if state == Switch.ON
-                state = Switch.OFF;
-            else
-                state = Switch.ON;
-            end
-        end
-
-        function isOn = isOn(state)
-            % Check if the switch is ON
-            isOn = (state == Switch.ON);
-        end
-
-        function isOff = isOff(state)
-            % Check if the switch is OFF
-            isOff = (state == Switch.OFF);
         end
     end
 end
