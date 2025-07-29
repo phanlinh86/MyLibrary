@@ -25,7 +25,7 @@ classdef Python < handle
         % Expected hello message from the Python server.
         % This must exactly match what the Python server sends (after stripping newline).
         helloMsg = 'Hello from Python server!';
-        DEBUG = 1;
+        DEBUG = 0;
     end
 
     methods (Access=public)
@@ -128,6 +128,9 @@ classdef Python < handle
                 % Catch and rethrow any connection errors
                 error('MATLAB:PythonSocketConnectionError', 'Connection Error: %s', ME.message);
             end
+            % If connect successfully, add Python lib folder to PATH
+            self.exec(sprintf('LIB_PATH = r"%s"', self.libpath)); 
+            self.exec('sys.path.append(LIB_PATH)');
         end
 
         % Send a string to the Python server
