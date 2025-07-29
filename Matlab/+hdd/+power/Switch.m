@@ -3,6 +3,7 @@ classdef Switch < handle
     properties (Constant)
         ON = 1;  % Constant for switch ON state
         OFF = 0; % Constant for switch OFF state
+        UNKNOWN = 'None'  % Constant for switch unknown state
     end
     % Static properties
     properties (Access=public)
@@ -47,14 +48,18 @@ classdef Switch < handle
                         fprintf('HDD Power Supply turned ON. \n');
                     elseif curState == self.OFF
                         fprintf('HDD Power Supply turned OFF. \n');
-                    else
+                    elseif curState == self.UNKNOWN
                         fprintf('HDD Power Supply state is unknown\n');
                     end
                 end
-
             else
                 curState = varargin{1};
                 self.python.eval(sprintf('switch.state(%d)', curState));                
+                % Verify the state after switching
+                newState = self.state();
+                if newState ~= curState   
+                    error('Unable to switch to state %d. \n', curState ); 
+                end
             end
         end
 
