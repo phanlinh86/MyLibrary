@@ -346,120 +346,315 @@ classdef Python < handle
     methods (Access=private)
         function parsedValue = parsePythonResultString(self, pythonString)
             % parsePythonResultString Parses a string received from Python into a MATLAB data type.
-            %   Handles numbers, strings, and Python list/NumPy array string representations.
+            %   Handles numbers, strings, Python lists/arrays, and dictionaries (dict).
+            %   Tries a quick JSON-normalization + jsondecode first, then falls back
+            %   to a recursive parser for complex/malformed Python literal strings.
 
             pythonString = strtrim(pythonString); % Remove leading/trailing whitespace
 
-            % Try to parse as a number
+            if isempty(pythonString)
+                parsedValue = '';
+                return;
+            end
+
+            % Quick numeric parse (preserve previous behavior)
             [num, status] = str2num(pythonString); %#ok<ST2NM>
             if status && ~isempty(pythonString) && (isnumeric(num) || islogical(num))
                 parsedValue = num; % It's a simple number or boolean
                 return;
             end
 
-            % Check for Python string literal format (e.g., 'hello', "world")
+            % Quick string literal check (preserve previous behavior)
             if (startsWith(pythonString, '''') && endsWith(pythonString, '''')) || ...
                (startsWith(pythonString, '"') && endsWith(pythonString, '"'))
-                % Remove quotes and unescape internal quotes if necessary (simple unescape for now)
-                parsedValue = strrep(pythonString(2:end-1), '''''', '''');
+                % Remove surrounding quotes and unescape common escapes
+                inner = pythonString(2:end-1);
+                % Simple unescape for doubled single quotes
+                inner = strrep(inner, '''''', '''');
+                parsedValue = inner;
                 return;
             end
 
-            % Check for Python list or NumPy array string representation
-            % e.g., "[1, 2, 3]", "[[1, 2], [3, 4]]", "array([1, 2])"
-            if (startsWith(pythonString, '[') && endsWith(pythonString, ']')) || ...
-               (startsWith(pythonString, 'array([') && endsWith(pythonString, '])'))
+            % NEW: If the server returned an unquoted string that contains whitespace
+            % (for example: Result: abcdef as3tfff) and it doesn't contain any
+            % structural characters like brackets, commas, or colons, treat the
+            % entire line as a string instead of splitting on whitespace.
+            if isempty(regexp(pythonString, '[,:\{\}\[\]\(\)]', 'once')) && ~isempty(regexp(pythonString, '\s', 'once'))
+                parsedValue = pythonString;
+                return;
+            end
 
-                % Remove prefixes and suffixes to get raw content
-                if startsWith(pythonString, 'array(')
-                    content = pythonString(length('array(')+1 : end-1); % Remove 'array(' and ')'
+            % Attempt 1: Normalize common Python literal tokens to JSON and use jsondecode
+            try
+                s = pythonString;
+                % Handle Python's array(...) wrapper e.g., array([1,2])
+                if startsWith(s, 'array(')
+                    % Extract the parentheses content if possible
+                    % Find matching closing parenthesis - simple heuristic: remove leading 'array('
+                    s = s(length('array(')+1 : end-1);
+                end
+
+                % Replace Python boolean/None literals with JSON equivalents
+                s = regexprep(s, '\bTrue\b', 'true');
+                s = regexprep(s, '\bFalse\b', 'false');
+                s = regexprep(s, '\bNone\b', 'null');
+
+                % Heuristic: convert single-quoted strings to double-quoted for json
+                % This is a best-effort replacement and may fail on complex escaped inputs
+                % Replace occurrences of '...' with "..." (non-greedy)
+                s = regexprep(s, "(?<!\\)'([^']*)'", '"$1"');
+
+                parsedValue = jsondecode(s);
+                return;
+            catch
+                % If jsondecode fails, fall through to the recursive parser below
+            end
+
+            % Attempt 2: Recursive-descent parser for Python literals
+            s = pythonString;
+            % If it's wrapped by array(...) or dict(...), try to strip simple wrappers
+            if startsWith(s, 'array(') && endsWith(s, ')')
+                s = s(length('array(')+1:end-1);
+            end
+
+            idx = 1;
+            n = length(s);
+
+            % Helper: skip whitespace
+            function skipws()
+                while idx <= n && isspace(s(idx))
+                    idx = idx + 1;
+                end
+            end
+
+            % Helper: peek current char
+            function c = peek()
+                if idx <= n
+                    c = s(idx);
                 else
-                    content = pythonString;
+                    c = '';
                 end
-                
-                % Remove outer brackets for primary parsing
-                if startsWith(content, '[') && endsWith(content, ']')
-                    content = content(2:end-1);
+            end
+
+            % Helper: consume and return next char
+            function c = nextc()
+                if idx <= n
+                    c = s(idx);
+                    idx = idx + 1;
+                else
+                    c = '';
                 end
+            end
 
-                % Split by top-level commas to distinguish rows/elements
-                % This is a simplified split; robust parsing might need more advanced logic
-                % (e.g., handling commas within sub-lists).
-                elements_str = regexp(content, '\[.*?\]|[^,]+', 'match'); % Matches [] blocks or non-comma text
-
-                num_elements = length(elements_str);
-                if num_elements == 0
-                    parsedValue = []; % Empty list/array
+            % Parse a value (object, array, string, number, boolean, None, bareword)
+            function val = parseValue()
+                skipws();
+                ch = peek();
+                if isempty(ch)
+                    val = '';
                     return;
                 end
-
-                % Determine if it's a 1D or 2D structure
-                is2D = false;
-                if num_elements > 0 && startsWith(strtrim(elements_str{1}), '[')
-                    is2D = true;
-                end
-
-                if is2D
-                    % It's a list of lists (2D array)
-                    num_rows = num_elements;
-                    parsed_rows = cell(1, num_rows);
-                    for i = 1:num_rows
-                        row_str = strtrim(elements_str{i});
-                        % Remove outer brackets for the row and split by comma
-                        row_content = row_str(2:end-1); % Remove [ ]
-                        row_elements = strsplit(row_content, ',');
-                        
-                        current_row_vals = [];
-                        for j = 1:length(row_elements)
-                            val_str = strtrim(row_elements{j});
-                            [val, status_val] = str2num(val_str); %#ok<ST2NM>
-                            if status_val && ~isempty(val_str)
-                                current_row_vals = [current_row_vals, val]; %#ok<AGROW>
-                            else
-                                warning('MATLAB:PythonSocketParseError', 'Could not parse element "%s" in row.', val_str);
-                                current_row_vals = [current_row_vals, NaN]; %#ok<AGROW>
-                            end
-                        end
-                        parsed_rows{i} = current_row_vals;
-                    end
-                    
-                    % Concatenate rows to form a 2D matrix
-                    if ~isempty(parsed_rows)
-                        % Find max columns to pad if rows have different lengths
-                        max_cols = 0;
-                        for i = 1:num_rows
-                            max_cols = max(max_cols, length(parsed_rows{i}));
-                        end
-                        
-                        % Create an empty matrix and fill it
-                        parsedValue = NaN(num_rows, max_cols);
-                        for i = 1:num_rows
-                            parsedValue(i, 1:length(parsed_rows{i})) = parsed_rows{i};
-                        end
-                    else
-                        parsedValue = [];
-                    end
-
+                if ch == '{'
+                    val = parseObject();
+                    return;
+                elseif ch == '['
+                    val = parseArray();
+                    return;
+                elseif ch == '''' || ch == '"'
+                    val = parseString();
+                    return;
                 else
-                    % It's a 1D array (simple list of numbers)
-                    parsed_vals = [];
-                    for i = 1:num_elements
-                        val_str = strtrim(elements_str{i});
-                        [val, status_val] = str2num(val_str); %#ok<ST2NM>
-                        if status_val && ~isempty(val_str)
-                            parsed_vals = [parsed_vals, val]; %#ok<AGROW>
-                        else
-                            warning('MATLAB:PythonSocketParseError', 'Could not parse element "%s".', val_str);
-                            parsed_vals = [parsed_vals, NaN]; %#ok<AGROW>
-                        end
+                    % Could be True/False/None/number/bareword
+                    token = parseToken();
+                    if isempty(token)
+                        val = '';
+                        return;
                     end
-                    parsedValue = parsed_vals;
+                    if strcmp(token, 'True') || strcmpi(token, 'true')
+                        val = true; return;
+                    elseif strcmp(token, 'False') || strcmpi(token, 'false')
+                        val = false; return;
+                    elseif strcmp(token, 'None') || strcmpi(token, 'null')
+                        val = [];
+                        return;
+                    end
+                    % Try parse as number
+                    num = str2double(token);
+                    if ~isnan(num)
+                        val = num; return;
+                    end
+                    % Fallback: return token as string
+                    val = token;
+                    return;
                 end
-                return;
             end
 
-            % If nothing else matches, return as a plain string
-            parsedValue = pythonString;
+            % Parse an unquoted token until delimiter or whitespace
+            function t = parseToken()
+                skipws();
+                start = idx;
+                while idx <= n
+                    ch = s(idx);
+                    if any(ch == [',', ':', '}', ']', ' ' '\t' '\n' '\r'])
+                        break;
+                    end
+                    % also break on quotes
+                    if ch == '''' || ch == '"'
+                        break;
+                    end
+                    idx = idx + 1;
+                end
+                if idx > start
+                    t = strtrim(s(start:idx-1));
+                else
+                    t = '';
+                end
+            end
+
+            % Parse quoted string with escape handling
+            function strv = parseString()
+                quote = nextc(); % consume opening quote
+                parts = '';
+                while idx <= n
+                    ch = nextc();
+                    if isempty(ch)
+                        break;
+                    end
+                    if ch == '\\'
+                        % Escape sequence
+                        if idx <= n
+                            esc = nextc();
+                            switch esc
+                                case 'n'
+                                    parts = [parts, char(10)];
+                                case 't'
+                                    parts = [parts, char(9)];
+                                case 'r'
+                                    parts = [parts, char(13)];
+                                case ''''
+                                    parts = [parts, ''''];
+                                case '"'
+                                    parts = [parts, '"'];
+                                case '\\'
+                                    parts = [parts, '\\'];
+                                otherwise
+                                    % Unknown escape, keep verbatim
+                                    parts = [parts, esc];
+                            end
+                        end
+                    elseif ch == quote
+                        break;
+                    else
+                        parts = [parts, ch];
+                    end
+                end
+                strv = parts;
+            end
+
+            % Parse Python-like array/list
+            function arr = parseArray()
+                nextc(); % consume '['
+                elems = {};
+                skipws();
+                if peek() == ']'
+                    nextc(); arr = {} ; return;
+                end
+                while true
+                    skipws();
+                    v = parseValue();
+                    elems{end+1} = v; %#ok<AGROW>
+                    skipws();
+                    ch = peek();
+                    if ch == ','
+                        nextc(); continue;
+                    elseif ch == ']'
+                        nextc(); break;
+                    else
+                        % Unexpected character - try to continue or break
+                        break;
+                    end
+                end
+                % Attempt to convert to numeric array if possible
+                isAllNumericScalar = all(cellfun(@(x) isnumeric(x) && isscalar(x), elems));
+                if isAllNumericScalar
+                    try
+                        arr = cell2mat(elems);
+                    catch
+                        arr = elems;
+                    end
+                else
+                    arr = elems;
+                end
+            end
+
+            % Parse Python-like dict into MATLAB struct (sanitize field names)
+            function obj = parseObject()
+                nextc(); % consume '{'
+                skipws();
+                if peek() == '}'
+                    nextc(); obj = struct(); return;
+                end
+                keys = {};
+                vals = {};
+                while true
+                    skipws();
+                    % Parse key: usually a quoted string, but allow barewords
+                    if peek() == '''' || peek() == '"'
+                        key = parseString();
+                    else
+                        key = parseToken();
+                    end
+                    skipws();
+                    % Accept ':' or '=>' (just in case) or '='
+                    if peek() == ':'
+                        nextc();
+                    elseif startsWith(s(idx:min(n, idx+1)), '=>')
+                        idx = idx + 2;
+                    elseif peek() == '='
+                        nextc();
+                    end
+                    skipws();
+                    v = parseValue();
+                    keys{end+1} = key; %#ok<AGROW>
+                    vals{end+1} = v; %#ok<AGROW>
+                    skipws();
+                    ch = peek();
+                    if ch == ','
+                        nextc(); continue;
+                    elseif ch == '}'
+                        nextc(); break;
+                    else
+                        % Unexpected - try to continue
+                        break;
+                    end
+                end
+                % Build struct, sanitize field names
+                obj = struct();
+                for ii = 1:length(keys)
+                    rawKey = keys{ii};
+                    if isempty(rawKey)
+                        fname = sprintf('field_%d', ii);
+                    else
+                        fname = matlab.lang.makeValidName(rawKey);
+                    end
+                    % If field already exists, append numeric suffix to avoid overwriting
+                    base = fname; kcount = 1;
+                    while isfield(obj, fname)
+                        fname = sprintf('%s_%d', base, kcount); kcount = kcount + 1;
+                    end
+                    obj.(fname) = vals{ii};
+                end
+            end
+
+            % Final parse attempt
+            try
+                idx = 1; n = length(s);
+                skipws();
+                parsedValue = parseValue();
+            catch ME
+                warning('MATLAB:PythonSocketParseError', 'Failed to parse python string: %s. Returning raw string.', ME.message);
+                parsedValue = pythonString;
+            end
         end
     end
 end
