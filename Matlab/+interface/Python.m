@@ -233,7 +233,11 @@ classdef Python < dynamicprops
                 end
             end
             if exist('response', 'var')
-                result = self.parsePythonResultString(response);
+                if contains(response, 'object at ')
+                    result = self.getObject(evalStr);
+                else
+                    result = self.parsePythonResultString(response);
+                end
             end
         end
 
@@ -254,7 +258,13 @@ classdef Python < dynamicprops
             try
                 result = jsondecode(response);
             catch
-                result = self.parsePythonResultString(response);
+                % Look for objects that are not JSON by checking for 'object at ' pattern
+                % Object example: <office.mail.AlarmEmail object at 0x000001B37FEC2BA0>
+                if contains(response, 'object at ')
+                    result = self.getObject(varName);
+                else
+                    result = self.parsePythonResultString(response);
+                end
             end
         end
 
@@ -368,7 +378,6 @@ classdef Python < dynamicprops
             obj = interface.pythonobject;
             % Attach metadata properties
             p = addprop(obj, 'BaseName'); obj.BaseName = varName;
-            p = addprop(obj, 'BaseDriveObj'); obj.BaseDriveObj = self;
 
             % Helper: convert MATLAB arg to a Python literal snippet
             function argPy = matlabArgToPython(arg)

@@ -75,28 +75,12 @@ class MatlabTcpHandler(socketserver.BaseRequestHandler):
                     elif cmd == '/get':
                         if arg in global_vars:
                             result = global_vars[arg]
-                            # Try to serialize as JSON if possible
-                            try:
-                                import json
-                                # If the object has to_dict, use it; else if __dict__, use that; else fallback to str
-                                if hasattr(result, 'to_dict'):
-                                    result_dict = result.to_dict()
-                                    json_str = json.dumps(result_dict)
-                                    self.request.sendall((json_str + '\n').encode('utf-8'))
-                                elif hasattr(result, '__dict__'):
-                                    result_dict = result.__dict__
-                                    json_str = json.dumps(result_dict)
-                                    self.request.sendall((json_str + '\n').encode('utf-8'))
-                                else:
-                                    raise TypeError('Object is not serializable to JSON')
-                            except Exception:
-                                # Fallback: send as string (original behavior)
-                                if not isinstance(result, str):
-                                    self.request.sendall(str.encode(f""
-                                                            f"{f"{result}".replace(']\n', '];').replace('\n', ',')}"
-                                                            f"\n"))
-                                else:
-                                    self.request.sendall(str.encode(f'"{result}"\n'))
+                            if not isinstance(result, str):
+                                self.request.sendall(str.encode(f""
+                                                        f"{f"{result}".replace(']\n', '];').replace('\n', ',')}"
+                                                        f"\n"))
+                            else:
+                                self.request.sendall(str.encode(f'"{result}"\n'))
                         else:
                             self.request.sendall(f"Error: Variable '{arg}' not found\n".encode('utf-8'))
 
