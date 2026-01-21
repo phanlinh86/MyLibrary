@@ -4,7 +4,7 @@
 % Java integration typically handles them automatically,
 % but they are good for clarity.
 
-classdef Python < handle
+classdef Python < dynamicprops
     %BASE A MATLAB class to communicate with a Python socket server.
     %   This class provides methods to connect to a Python server,
     %   send commands, and receive responses.
@@ -341,6 +341,153 @@ classdef Python < handle
             jsonStr = self.read();
             structObj = jsondecode(jsonStr);
         end
+
+        function obj = get_object(self, varName)
+            % MIRROR Create a MATLAB object for a Python object without external helpers.
+            %   obj = mirror(self, varName) queries the Python server for
+            %   callable attributes of the Python variable named `varName` and
+            %   returns a lightweight MATLAB object. The object is an
+            %   instance of `dynamicprops` whose properties are function
+            %   handles that forward calls to the remote Python object using
+            %   the existing `eval`/`set`/`get` methods on this Python client.
+            %
+            %   Limitations: only positional arguments are supported for method
+            %   calls; supported MATLAB argument types: char/string, numeric
+            %   scalars/vectors/matrices, and logicals.
+
+            if nargin < 2 || isempty(varName)
+                error('MATLAB:PythonMirrorObject:MissingVarName', 'A Python variable name must be provided.');
+            end
+
+            % Query Python for callable attribute names (exclude dunder names)
+            try
+                pyExpr = sprintf('[name for name in dir(%s) if callable(getattr(%s, name)) and not name.startswith("__")]', varName, varName);
+                methodNames = self.eval(pyExpr);
+            catch ME
+                error('MATLAB:PythonMirrorObject:QueryFailed', 'Failed to query Python object ''%s'': %s', varName, ME.message);
+            end
+
+            % Normalize returned method names into a cell array of chars
+            if ischar(methodNames)
+                methodNames = {methodNames};
+            elseif isstring(methodNames)
+                methodNames = cellstr(methodNames);
+            elseif isnumeric(methodNames) || islogical(methodNames)
+                methodNames = arrayfun(@num2str, methodNames, 'UniformOutput', false);
+            elseif iscell(methodNames)
+                methodNames = cellfun(@(x) char(x), methodNames, 'UniformOutput', false);
+            else
+                methodNames = {};
+            end
+            methodNames = methodNames(~cellfun(@(x) isempty(x) || ~ischar(x), methodNames));
+
+            % Create a dynamic python object (pythonobject is a concrete subclass of dynamicprops)
+            obj = interface.pythonobject;
+            % Attach metadata properties
+            p = addprop(obj, 'BaseName'); obj.BaseName = varName;
+            p = addprop(obj, 'BaseDriveObj'); obj.BaseDriveObj = self;
+
+            % Helper: convert MATLAB arg to a Python literal snippet
+            function argPy = matlabArgToPython(arg)
+                if ischar(arg) || isstring(arg)
+                    s = char(arg);
+                    s = strrep(s, '''', ''''''); % escape single quotes by doubling
+                    argPy = ['''' s ''''];
+                    return;
+                end
+                if isnumeric(arg)
+                    if isscalar(arg)
+                        argPy = num2str(arg);
+                        return;
+                    else
+                        [r, c] = size(arg);
+                        if r == 1 || c == 1
+                            % 1D vector
+                            parts = arrayfun(@(x) num2str(x), arg(:)', 'UniformOutput', false);
+                            argPy = ['[' strjoin(parts, ', ') ']'];
+                            return;
+                        else
+                            % 2D matrix -> list of lists
+                            rows = cell(1, r);
+                            for ii = 1:r
+                                parts = arrayfun(@(x) num2str(x), arg(ii, :), 'UniformOutput', false);
+                                rows{ii} = ['[' strjoin(parts, ', ') ']'];
+                            end
+                            argPy = ['[' strjoin(rows, ', ') ']'];
+                            return;
+                        end
+                    end
+                end
+                if islogical(arg)
+                    if isscalar(arg)
+                        if arg
+                            argPy = 'True';
+                        else
+                            argPy = 'False';
+                        end
+                        return;
+                    else
+                        % logical array -> Python list of True/False
+                        vals = arrayfun(@(x) ternary(x, 'True', 'False'), arg(:), 'UniformOutput', false);
+                        argPy = ['[' strjoin(vals, ', ') ']'];
+                        return;
+                    end
+                end
+                % Unsupported type
+                error('MATLAB:PythonMirrorObject:UnsupportedArgType', 'Unsupported argument type: %s', class(arg));
+            end
+
+            % Small ternary helper (returns a or b depending on cond)
+            function out = ternary(cond, a, b)
+                if cond
+                    out = a; else out = b; end
+            end
+
+            % Method-call wrapper used by all mirrored methods
+            function out = callMethod(origName, varargin)
+                % Convert args
+                pyArgs = cell(1, numel(varargin));
+                for kk = 1:numel(varargin)
+                    pyArgs{kk} = matlabArgToPython(varargin{kk});
+                end
+                argsStr = strjoin(pyArgs, ', ');
+                if isempty(argsStr)
+                    expr = sprintf('%s.%s()', varName, origName);
+                else
+                    expr = sprintf('%s.%s(%s)', varName, origName, argsStr);
+                end
+                try
+                    out = self.eval(expr);
+                catch ME
+                    error('MATLAB:PythonMirrorObject:MethodCallFailed', 'Failed calling %s.%s: %s', varName, origName, ME.message);
+                end
+            end
+
+            % Add properties for each method: use a sanitized MATLAB name for property,
+            % but keep the original Python name for invocation.
+            for ii = 1:length(methodNames)
+                orig = methodNames{ii};
+                propName = matlab.lang.makeValidName(orig);
+                % Avoid name collision with existing obj fields
+                if isprop(obj, propName) || isfield(obj, propName)
+                    propName = sprintf('%s_%d', propName, ii);
+                end
+                addprop(obj, propName);
+                % Assign a function handle that calls the remote Python method
+                obj.(propName) = @(varargin) callMethod(orig, varargin{:});
+            end
+
+            % Add simple getattr and setattr helpers
+            addprop(obj, 'getattr');
+            obj.getattr = @(attrName) self.eval(sprintf('%s.%s', varName, char(attrName)));
+
+            addprop(obj, 'setattr');
+            obj.setattr = @(attrName, val) self.set(sprintf('%s.%s', varName, char(attrName)), val);
+
+            % Make obj read-only metadata helper
+            addprop(obj, 'methods'); obj.methods = methodNames;
+        end
+
     end
 
     methods (Access=private)
