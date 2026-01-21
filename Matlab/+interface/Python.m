@@ -524,7 +524,10 @@ classdef Python < dynamicprops
                     % Attach as a regular property (not a method)
                     addprop(obj, propName);
                     obj.(propName) = val;
+                    attrNames{ii} = propName;
                 end
+                addprop(obj, 'attributes');
+                obj.attributes = attrNames;
             catch ME
                 % Don't let attribute mirroring break object creation; warn instead
                 warning('MATLAB:PythonMirrorObject:AttrQueryFailed', 'Failed to enumerate attributes for %s: %s', varName, ME.message);
