@@ -478,6 +478,57 @@ classdef Python < dynamicprops
 
             % Make obj read-only metadata helper
             addprop(obj, 'methods'); obj.methods = methodNames;
+
+            % --- New: Mirror attributes from the Python object's __dict__ ---
+            try
+                % Request attribute names directly from __dict__ to avoid dunder and descriptors
+                pyExprAttrs = sprintf('list(getattr(%s, "__dict__", {}).keys())', varName);
+                attrNames = self.eval(pyExprAttrs);
+
+                % Normalize returned attribute names into a cell array of chars
+                if ischar(attrNames)
+                    attrNames = {attrNames};
+                elseif isstring(attrNames)
+                    attrNames = cellstr(attrNames);
+                elseif isnumeric(attrNames) || islogical(attrNames)
+                    attrNames = arrayfun(@num2str, attrNames, 'UniformOutput', false);
+                elseif iscell(attrNames)
+                    attrNames = cellfun(@(x) char(x), attrNames, 'UniformOutput', false);
+                else
+                    attrNames = {};
+                end
+                attrNames = attrNames(~cellfun(@(x) isempty(x) || ~ischar(x), attrNames));
+
+                % Add each attribute as a property on the MATLAB mirror object
+                for ii = 1:length(attrNames)
+                    orig = attrNames{ii};
+                    propName = matlab.lang.makeValidName(orig);
+                    % Avoid name collision with existing properties/methods
+                    if isprop(obj, propName) || isfield(obj, propName)
+                        propName = sprintf('%s_attr_%d', propName, ii);
+                    end
+
+                    % Try to fetch the attribute value. Use direct attribute access
+                    % (e.g., objName.attr) so eval will mirror objects recursively if needed.
+                    try
+                        val = self.eval(sprintf('%s.%s', varName, orig));
+                    catch
+                        % Fallback: use getattr(...) with a quoted attribute name
+                        try
+                            val = self.eval(sprintf('getattr(%s, ''%s'')', varName, orig));
+                        catch
+                            val = [];
+                        end
+                    end
+
+                    % Attach as a regular property (not a method)
+                    addprop(obj, propName);
+                    obj.(propName) = val;
+                end
+            catch ME
+                % Don't let attribute mirroring break object creation; warn instead
+                warning('MATLAB:PythonMirrorObject:AttrQueryFailed', 'Failed to enumerate attributes for %s: %s', varName, ME.message);
+            end
         end
 
     end
@@ -634,7 +685,7 @@ classdef Python < dynamicprops
                 start = idx;
                 while idx <= n
                     ch = s(idx);
-                    if any(ch == [',', ':', '}', ']', ' ' '\t' '\n' '\r'])
+                    if any(ch == [',', ':', '}', ']', ' ' sprintf('\t') sprintf('\n') sprintf('\r') ])
                         break;
                     end
                     % also break on quotes
