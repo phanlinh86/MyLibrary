@@ -325,24 +325,7 @@ classdef Python < dynamicprops
             response = self.read(); % Read the server's confirmation
         end
 
-        function response = set_struct(self, varName, structObj)
-            % SET_STRUCT Sends a MATLAB struct as JSON to the Python server.
-            %   response = set_struct(self, varName, structObj) sets a variable on the server.
-            jsonStr = jsonencode(structObj);
-            % Escape any problematic characters for Python eval
-            % Use /set_json <varName> <jsonStr>
-            self.write(sprintf('/set_json %s %s', varName, jsonStr));
-            response = self.read();
-        end
-
-        function structObj = get_struct(self, varName)
-            % GET_STRUCT Gets a struct variable from the Python server (expects JSON).
-            self.write(sprintf('/get_json %s', varName));
-            jsonStr = self.read();
-            structObj = jsondecode(jsonStr);
-        end
-
-        function obj = get_object(self, varName)
+        function obj = getObject(self, varName)
             % MIRROR Create a MATLAB object for a Python object without external helpers.
             %   obj = mirror(self, varName) queries the Python server for
             %   callable attributes of the Python variable named `varName` and
