@@ -3,7 +3,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+import sys
 import os
+# Add path to the current directory to import config
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
 from config import CONFIG_ALARM_EMAIL
 
 class GmailService(object):
