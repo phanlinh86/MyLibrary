@@ -25,7 +25,7 @@ classdef Python < dynamicprops
         % Expected hello message from the Python server.
         % This must exactly match what the Python server sends (after stripping newline).
         helloMsg = 'Hello from Python server!';
-        DEBUG = 1;
+        DEBUG = 0;
     end
 
     methods (Access=public)
@@ -330,7 +330,7 @@ classdef Python < dynamicprops
                 formattedValue = mat2str(varValue); % Fallback
             end
 
-            command = sprintf('/set %s=%s', varName, formattedValue);
+            command = sprintf('/exec %s=%s', varName, formattedValue);
             self.write(command);
             response = self.read(); % Read the server's confirmation
         end
@@ -375,9 +375,9 @@ classdef Python < dynamicprops
             methodNames = methodNames(~cellfun(@(x) isempty(x) || ~ischar(x), methodNames));
 
             % Create a dynamic python object (pythonobject is a concrete subclass of dynamicprops)
-            obj = interface.pythonobject;
+            obj = interface.pythonobject(self);
             % Attach metadata properties
-            p = addprop(obj, 'BaseName'); obj.BaseName = varName;
+            obj.name = varName;
 
             % Helper: convert MATLAB arg to a Python literal snippet
             function argPy = matlabArgToPython(arg)
@@ -526,7 +526,6 @@ classdef Python < dynamicprops
                     obj.(propName) = val;
                     attrNames{ii} = propName;
                 end
-                addprop(obj, 'attributes');
                 obj.attributes = attrNames;
             catch ME
                 % Don't let attribute mirroring break object creation; warn instead
