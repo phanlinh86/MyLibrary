@@ -46,6 +46,32 @@ classdef Python < dynamicprops
             end
         end
 
+        % Add path for Python server
+        function addpath(self, path)
+            self.exec(['sys.path.append("' strrep(path, '\', '/') '")']);
+        end
+        
+        % Import everything in a module or a class from a module
+        function import(self, module, varargin)
+            class = [];
+            if nargin >= 3
+                class = varargin{3};
+            end
+            if ~isempty(class)
+                self.exec(sprintf('from %s import %s', module, class));
+            else
+                self.exec(sprintf('from %s import %', module));
+            end
+        end
+        % Create a new object from a class
+        function newObj = new(self, class)
+            % NEW Creates a new instance of a Python class.
+            %   obj = new(self, class) creates a new instance of the specified class.
+            objName = sprintf('obj_%s_%d', class, randi(1e9)); % Unique object name
+            self.exec(sprintf('%s = %s()', objName, class));
+            newObj = self.getObject(objName);
+        end
+
         % Start the Python server (assumes 'python_server.py' is in the same directory)
         function serve(self, runInBackGround)
             % SERVE Starts the Python server process.

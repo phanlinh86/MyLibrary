@@ -2,10 +2,10 @@
 import socketserver
 import sys
 import io
-import struct
 import numpy as np
 import logging
 import json
+import os
 
 # Global dictionary to store variables
 global_vars = {}
@@ -152,6 +152,12 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 def start_server(host, port):
     server = ThreadedTCPServer((host, port), MatlabTcpHandler)
     server.daemon_threads = True  # Allow server to exit when main thread exits
+    # Setup path to main project directory
+    main_path = '\\'.join(os.path.realpath(__file__).split('\\')[:-2])  # Main path of the whole project
+    print(f"Setup path for Python Server: {main_path}")
+    if main_path not in sys.path:
+        sys.path.append(main_path)
+    # Start the server
     print(f"Python server listening on {host}:{port}")
     try:
         server.serve_forever()

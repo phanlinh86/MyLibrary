@@ -10,10 +10,23 @@ classdef pythonobject < dynamicprops
         attributes = {};    % To store Python attributes of the objects
     end    
     methods
+        % Constructor
         function self = pythonobject(client)
             self.name = '';
             self.client = client;
         end
+
+        % Destructor
+        function delete(self)
+            % Destructor to clean up the Python object if needed
+            % clear(obj) doesn't invoke this function, but delete(obj) does
+            try
+                self.client.exec(sprintf('del %s', self.name));
+            catch
+                % Ignore errors during deletion
+            end
+        end
+
         function varargout = subsref(self, S)
             % S(1).type is the access type (e.g., '.')
             % S(1).subs is the property/method name (e.g., 'myProperty')
