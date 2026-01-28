@@ -55,7 +55,7 @@ classdef Python < dynamicprops
         function import(self, module, varargin)
             class = [];
             if nargin >= 3
-                class = varargin{3};
+                class = varargin{1};
             end
             if ~isempty(class)
                 self.exec(sprintf('from %s import %s', module, class));
@@ -92,17 +92,20 @@ classdef Python < dynamicprops
                 end
                 scriptPath = [self.libpath '\interface\matlab.py'];
 
+                % Add host and port as arguments to the script
+                scriptCmd = sprintf('"%s" --host=%s --port=%d', scriptPath, self.host, self.port);
+
                 % Construct the command to start the Python server.
                 % 'start' is a Windows command to run a program in a new window.
                 % For Linux/macOS, you might use '&' or a dedicated terminal command.
                 if ispc % Windows
                     if runInBackGround
-                        command = sprintf('start "Python Server" /b python "%s"', scriptPath);
+                        command = sprintf('start "Python Server" /b python %s', scriptCmd);
                     else
-                        command = sprintf('start python "%s"', scriptPath);
+                        command = sprintf('start python %s', scriptCmd);
                     end
                 else % Unix-like (Linux/macOS) - might need adjustment for specific setups
-                    command = sprintf('python "%s" &', scriptPath); % '&' runs in background
+                    command = sprintf('python %s &', scriptCmd); % '&' runs in background
                 end
 
                 fprintf('Attempting to start Python server with command:\n%s\n', command);
@@ -279,19 +282,7 @@ classdef Python < dynamicprops
             % GET Retrieves a variable from the Python server.
             %   result = get(self, varName) automatically detects struct/dict via JSON.
             % If not JSON, fall back to regular get
-            self.write(sprintf('/get %s', varName));
-            response = self.read();
-            try
-                result = jsondecode(response);
-            catch
-                % Look for objects that are not JSON by checking for 'object at ' pattern
-                % Object example: <office.mail.AlarmEmail object at 0x000001B37FEC2BA0>
-                if contains(response, 'object at ')
-                    result = self.getObject(varName);
-                else
-                    result = self.parsePythonResultString(response);
-                end
-            end
+            result = self.eval(varName);
         end
 
         function response = set(self, varName, varValue, varargin)

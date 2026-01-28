@@ -1,4 +1,5 @@
 # server.py
+import argparse
 import socketserver
 import sys
 import io
@@ -6,6 +7,9 @@ import numpy as np
 import logging
 import json
 import os
+
+# Default
+DEFAULT_HOST, DEFAULT_PORT = "127.0.0.1", 12346
 
 # Global dictionary to store variables
 global_vars = {}
@@ -169,10 +173,17 @@ def start_server(host, port):
 
 
 if __name__ == "__main__":
+    # Get host and port from command line arguments if provided
+    parser = argparse.ArgumentParser(prog="Matlab-Python TCP Server",
+                                         description="A TCP server to execute Python commands from MATLAB.")
+    parser.add_argument('--host', type=str, default=DEFAULT_HOST)
+    parser.add_argument('--port', type=int, default=DEFAULT_PORT)
+    args = parser.parse_args()
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(client)s %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    HOST, PORT = "127.0.0.1", 12346
-    start_server(HOST, PORT)
+
+    start_server(args.host, args.port)
