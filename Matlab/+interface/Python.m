@@ -15,7 +15,9 @@ classdef Python < dynamicprops
         out = nan;          % Java PrintWriter for output stream
 
         % Host and port for the Python server
-        host = '127.0.0.1'; % Default host name
+        host = '127.0.0.1'; % Default host name to same machine
+                            % Set this to the server's IP if connecting remotely
+                            % or '0.0.0.0' to listen on all interfaces
         port = 12346;       % Default port number
 
         % Path to Python library. The MATLAB server is under

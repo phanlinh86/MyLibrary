@@ -8,7 +8,9 @@ import logging
 import json
 import os
 
-# Default
+# Default host to the same PC - 127.0.0.1
+# Set host to 0.0.0.0 to enable server access on different PCs
+# by running python matlab.py --host=0.0.0.0 --port=xxxxx
 DEFAULT_HOST, DEFAULT_PORT = "127.0.0.1", 12346
 
 # Global dictionary to store variables
